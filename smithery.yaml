@@ -1,0 +1,6 @@
+startCommand:
+  type: http
+  url: https://scrape-agent-mcp.vercel.app
+  configSchema:
+    type: object
+    properties: {}
