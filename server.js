@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { createServer } from "http";
 
@@ -45,38 +46,47 @@ server.tool(
   }
 );
 
-const httpServer = createServer(async (req, res) => {
-  if (req.method === "GET" && req.url === "/") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
-      name: "scrape-agent-mcp",
-      version: "1.0.0",
-      description: "Web scraping MCP server powered by x402"
-    }));
-    return;
+// Run as stdio if no PORT env var (for Glama/local testing)
+// Run as HTTP server if PORT is set (for Vercel/cloud deployment)
+if (!process.env.PORT && process.stdin.isTTY === false) {
+  // Stdio mode for Glama Docker testing
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+} else {
+  // HTTP mode for Vercel
+  const httpServer = createServer(async (req, res) => {
+    if (req.method === "GET" && req.url === "/") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        name: "scrape-agent-mcp",
+        version: "1.0.0",
+        description: "Web scraping MCP server powered by x402"
+      }));
+      return;
+    }
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined
+    });
+
+    res.on("close", () => transport.close());
+    await server.connect(transport);
+    await transport.handleRequest(req, res, await getBody(req));
+  });
+
+  function getBody(req) {
+    return new Promise((resolve) => {
+      let body = "";
+      req.on("data", chunk => body += chunk);
+      req.on("end", () => {
+        try { resolve(JSON.parse(body)); }
+        catch { resolve({}); }
+      });
+    });
   }
 
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined
-  });
-
-  res.on("close", () => transport.close());
-  await server.connect(transport);
-  await transport.handleRequest(req, res, await getBody(req));
-});
-
-function getBody(req) {
-  return new Promise((resolve) => {
-    let body = "";
-    req.on("data", chunk => body += chunk);
-    req.on("end", () => {
-      try { resolve(JSON.parse(body)); }
-      catch { resolve({}); }
-    });
+  const PORT = process.env.PORT || 3000;
+  httpServer.listen(PORT, () => {
+    console.log(`MCP server running on port ${PORT}`);
   });
 }
-
-const PORT = process.env.PORT || 3000;
-httpServer.listen(PORT, () => {
-  console.log(`MCP server running on port ${PORT}`);
-});
